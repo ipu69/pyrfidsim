@@ -4,6 +4,9 @@ from typing import Any, Callable, Iterable, NewType, Tuple, Iterator
 
 from pysim.sim.logger import ModelLogger, ModelLoggerConfig
 
+# Библиотеки, необходимые для работы неупорядоченной кучи событий
+import itertools
+import heapq
 
 EventId = NewType('EventId', int)
 
@@ -171,7 +174,59 @@ class Simulator:
         """Получить логгер."""
         return self._kernel.logger
 
+class EventQueue:
+    """
+    Класс, описывающий очередь событий, которые будут представлять
+    неупорядоченную кучу. Все события добавлятся и удаляются через
+    неё
+    """
+    def __init__(self):
+        self._next_id = itertools.count() # Неисчерпаемый range(), но нечто, что называется итератором (не генератор)
+        self._heap = [] # Лист, который будет преобразован в кучу
+        self._dict = {} # Словарь, с event_id
 
+    def push(self, t, item):
+        # Добавление одного события
+        event_id = next(self._next_id) # Почему функция, а не встроенный метод __next__()?
+        record = [t, event_id, item] # List с 3мя элементами: время события, порядковый номер события, само событие
+        heapq.heappush(self._heap, record) # Помещаем в кучу
+        self._dict[event_id] = record # Добавляем под ключом порядкого номера события лист, который был кинут в кучу
+        return event_id # Возвращаем порядковый номер помещённого в кучу события
+
+    def pop(self):
+        # Удаление ближайшего по времени события
+        if self.empty:
+            raise IndexError("Удаление из пустой очереди")
+        t_fire, event_id, item = heapq.heappop(self._heap) 
+        while item is None:
+            t_fire, event_id, item = heapq.heappop(self._heap) # Перебираем, пока не удалим существующее наименьшее событие из кучи
+        self._dict.pop(event_id)  # Удаляем запись об этом событии из словаря
+        return t_fire, event_id, item 
+
+    def cancel(self, event_id):
+        # Реализация отмены события
+        if event_id is not None and event_id in self._dict:
+            # record is [t, event_id, item]
+            record = self._dict.pop(event_id) # Удаляем запись о событии из словаря (но не из кучи)
+            record[-1] = None  # setting record.item = None
+
+    def __len__(self):
+        return len(self._dict)
+
+    @property
+    def empty(self):
+        return len(self._dict) == 0
+
+    def clear(self):
+        # Очищаем всю очередь
+        self._dict.clear()
+        self._heap.clear()
+    
+    def as_list(self):
+        # Возваращем отсортированную кучу в виде list
+        l = list(self._heap)
+        l.sort()
+        return l
 class Kernel:
     def __init__(self, model_name: str):
         # Настраиваем название модели и логгер
@@ -218,6 +273,8 @@ class Kernel:
         return EventId(0)  # TODO: implement
     
     def cancel(self, event_id: EventId) -> int:
+        # if event_id is not None and event_id in
+        self._queue.cancel(event_id) 
         return 0  # TODO: implement
     
     def stop(self, msg: str) -> None:
